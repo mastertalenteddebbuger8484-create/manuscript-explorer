@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ manuscript['title'] }} - Reader</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.9.359/pdf.min.js"></script>
+    <script src="http://www.turnjs.com/lib/turn.min.js"></script> 
+
+    <style>
+        body {
+            background-color: #2c241b; margin: 0; display: flex; flex-direction: column;
+            align-items: center; min-height: 100vh; color: #f0e6d2; font-family: 'Georgia', serif;
+            overflow-x: hidden;
+        }
+        .header {
+            padding: 10px 20px; width: 100%; background: #1a1510; display: flex;
+            justify-content: space-between; align-items: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5); z-index: 10;
+        }
+        .header h2 { margin: 0; font-size: 1.2rem; color: #c9a86a; }
+        .controls { display: flex; gap: 10px; align-items: center; }
+        .btn-custom {
+            background: #c9a86a; color: #000; padding: 5px 15px; text-decoration: none;
+            border-radius: 5px; font-weight: bold; cursor: pointer; border: none;
+            font-size: 0.9rem; transition: background 0.2s;
+        }
+        .btn-custom:hover { background: #ffe0a3; }
+        .btn-custom.active { background: #fff; }
+        .page-counter { font-size: 1rem; color: #f0e6d2; margin: 0 10px; }
+
+        #main-content {
+            width: 90%; max-width: 1200px; padding: 40px 0;
+            display: flex; flex-direction: column; align-items: center;
+        }
+        #viewer-area {
+            width: 100%; border-radius: 10px; overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5); margin-bottom: 30px;
+        }
+
+        #pdf-scroll-view { width: 100%; height: 80vh; border: 5px solid #4a3b2a; display: none; }
+        iframe { width: 100%; height: 100%; border: none; }
+
+        #flipbook-view { 
+            width: 100%; min-height: 500px; background: #1a1510;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+        #flipbook { width: 900px; height: 600px; margin-bottom: 20px; }
+        #flipbook .page { 
+            background-color: white; 
+            box-shadow: 0 0 15px rgba(0,0,0,0.3);
+            background-size: 100% 100%; 
+        }
+        canvas { width: 100% !important; height: 100% !important; }
+
+        .flip-controls { display: flex; gap: 15px; margin-top: 15px; }
+
+        .manuscript-info {
+            width: 100%;
+            background: #1a1510;
+            padding: 25px;
+            border-radius: 10px;
+            border-left: 5px solid #c9a86a;
+        }
+        .manuscript-info h3 { color: #c9a86a; margin-bottom: 15px; }
+        .detail-row strong { color: #c9a86a; width: 100px; display: inline-block; }
+        .full-description { margin-top: 20px; border-top: 1px dashed #4a3b2a; padding-top: 20px; }
+
+        #loader { 
+            position: absolute; font-size: 1.5rem; color: #c9a86a; padding: 20px;
+            background: rgba(44, 36, 27, 0.9); border-radius: 10px; z-index: 50;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div>
+        <h2>{{ manuscript['title'] }}</h2>
+        <small style="color: #999;">{{ manuscript['era'] }} | {{ manuscript['genre'] }}</small>
+    </div>
+    <div class="controls">
+        <button class="btn-custom active" onclick="switchMode('flip', this)">Virtual Book</button>
+        <button class="btn-custom" onclick="switchMode('pdf', this)">PDF Scroll</button>
+        <button class="btn-custom" onclick="annotate()">Annotate</button>
+        <a href="{{ url_for('static', filename='pdfs/' + manuscript['pdf_file']) }}" download class="btn-custom">Download</a>
+        <a href="/" class="btn-custom" style="background:#444; color:white;">Exit</a>
+    </div>
+</div>
+
+<div id="main-content">
+
+    <div id="loader">Processing Manuscript...</div>
+
+    <div id="viewer-area">
+
+        <div id="flipbook-view">
+            <div id="flipbook"></div>
+            <div class="flip-controls">
+                <button class="btn-custom" onclick="$('#flipbook').turn('previous');">Previous</button>
+                <span id="page-number-display" class="page-counter">Page 1 / Total</span>
+                <button class="btn-custom" onclick="$('#flipbook').turn('next');">Next</button>
+            </div>
+        </div>
+
+        <div id="pdf-scroll-view">
+            <iframe src="{{ url_for('static', filename='pdfs/' + manuscript['pdf_file']) }}"></iframe>
+        </div>
+
+    </div>
+
+    <div class="manuscript-info">
+        <h3>Manuscript Details</h3>
+        <p><strong>Title:</strong> {{ manuscript['title'] }}</p>
+        <p><strong>Era:</strong> {{ manuscript['era'] }}</p>
+        <p><strong>Genre:</strong> {{ manuscript['genre'] }}</p>
+        <div class="full-description">
+            <h4>Description:</h4>
+            <p>{{ manuscript['description'] }}</p>
+        </div>
+    </div>
+
+</div>
+
+<script>
+const pdfUrl = "{{ url_for('static', filename='pdfs/' + manuscript['pdf_file']) }}";
+let pdfDoc = null;
+const flipbookEl = document.getElementById('flipbook');
+const loaderEl = document.getElementById('loader');
+const pageDisplay = document.getElementById('page-number-display');
+let totalPages = 0;
+
+function switchMode(mode, btn) {
+    document.querySelectorAll('.btn-custom').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    if(mode === 'flip') {
+        document.getElementById('flipbook-view').style.display = 'flex';
+        document.getElementById('pdf-scroll-view').style.display = 'none';
+    } else {
+        document.getElementById('flipbook-view').style.display = 'none';
+        document.getElementById('pdf-scroll-view').style.display = 'block';
+    }
+}
+
+function annotate() {
+    alert("Annotation feature coming soon.");
+}
+
+/* ✅✅✅ FULL TURN.JS FIX — NO PAGE LIMIT ✅✅✅ */
+async function loadFlipbook() {
+    loaderEl.style.display = 'block';
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.9.359/pdf.worker.min.js';
+
+    try {
+        pdfDoc = await pdfjsLib.getDocument(pdfUrl).promise;
+        totalPages = pdfDoc.numPages;
+    } catch (error) {
+        loaderEl.innerText = "Error loading PDF.";
+        console.error(error);
+        return;
+    }
+
+    for (let i = 1; i <= totalPages; i++) {
+        const page = await pdfDoc.getPage(i);
+        const div = document.createElement('div');
+        div.className = 'page';
+        const canvas = document.createElement('canvas');
+        div.appendChild(canvas);
+        flipbookEl.appendChild(div);
+
+        const viewport = page.getViewport({ scale: 1.5 });
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+
+        await page.render({
+            canvasContext: canvas.getContext('2d'),
+            viewport: viewport
+        }).promise;
+
+        loaderEl.innerText = `Processing ${i}/${totalPages}`;
+    }
+
+    $(flipbookEl).turn({
+        width: 900,
+        height: 600,
+        autoCenter: true,
+        gradients: true,
+        acceleration: true
+    });
+
+    $(flipbookEl).bind("turning", function(e, page) {
+        pageDisplay.innerText = `Page ${page} / ${totalPages}`;
+    });
+
+    loaderEl.style.display = 'none';
+}
+
+document.addEventListener('DOMContentLoaded', loadFlipbook);
+</script>
+
+</body>
+</html>
